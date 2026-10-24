@@ -51,32 +51,30 @@ category = sys.argv[3] if len(sys.argv) > 3 else 'setcover'
 
 #Time_Limit = 1800
 CHECKPOINT_FILE = "processed_files.json"
-start_ep = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-end_ep = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+start_ep = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+end_ep = int(sys.argv[3]) if len(sys.argv) > 3 else 1
 alpha = 1
 #hash_ep = int(sys.argv[1]) if len(sys.argv) > 0 else 2
-N_runs    = 1
+N_runs    = 100
 results = []
+csv_vals = []
+window_size = 0
 
-master_file_path = f"D:\\Logs & CSVs\\logs{category}_ma_Mdp3_{end_ep}Ep.txt"
-master_csv_path = f"D:\\Logs & CSVs\\csv{category}_ma_Mdp3_{end_ep}Ep.csv"
-folder_end = f"SynInst_ma_Mdp3_{end_ep}Ep" 
+master_file_path = f"D:\\Logs & CSVs\\logs\\{category}_{N_runs}runs_stPen_Mdp3_{end_ep}Ep.txt"
+master_csv_path = f"D:\\Logs & CSVs\\csv\\{category}_{N_runs}runs_stPen_Mdp3_{end_ep}Ep.csv"
+folder_end = f"SynInst_{N_runs}runs_stPen_Mdp3_{end_ep}Ep"  
 
-'''master_file_path = f"{category[0].upper()}_LftOvr_{end_ep}_tr+100ε1G_TreeEp.txt"
-master_csv_path = f"{category[0].upper()}_LftOvr_{end_ep}_tr+100ε1G_TreeEp.csv"
-folder_end = f"{category[0].upper()}_LftOvr_{end_ep}_tr+100ε1G_TreeEp" '''
-
-'''master_file_path = f"2club200v15p5scn_tr2{end_ep}.txt"
-master_csv_path = f"2club200v15p5scn_tr2{end_ep}.csv"
-folder_end = f"tr2_{end_ep}" '''
-
-'''master_file_path = f"2club200v15p5scn_tr2_scip_sb.txt"
-master_csv_path = f"2club200v15p5scn_tr2_scip_sb.csv"
-folder_end = f"2club200v15p5scn_tr2_scip_sb" '''
+'''master_file_path = f"D:\\Logs & CSVs\\logs\\I_000_{N_runs}runs_stPen_Mdp3_{end_ep}Ep.txt"
+master_csv_path = f"D:\\Logs & CSVs\\csv\\I_000_{N_runs}runs_stPen_Mdp3_{end_ep}Ep.csv"
+folder_end = f"I_000_{N_runs}runs_stPen_Mdp3_{end_ep}Ep"  '''
 
 '''master_file_path = f"S_000_stPen_Tr2.txt"
 master_csv_path = f"S_000_stPen_Tr2.csv"
 folder_end = f"S_000_stPen_Tr2" '''
+
+'''master_file_path = f"D:\\Logs & CSVs\\smoke_test.txt"
+master_csv_path = f"D:\\Logs & CSVs\\smoke_test.csv"
+folder_end = f"smoke_test" '''
 
 def set_seed(seed: int = 42):
     # 1. Python built-in random module
@@ -95,6 +93,140 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def syntheticInst_print(gmodel, name_only):
+    log_buffer = io.StringIO()
+    with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
+        set_seed(42)  # Set a fixed seed for reproducibility
+        gp_env = gp.Env(empty=True)
+        gp_env.setParam("OutputFlag", 0)
+        gp_env.setParam("FeasibilityTol", 1e-9)
+        gp_env.start()
+        A_scaled, b_scaled, le_mask, ge_mask, eq_mask = extract_sparse_gurobipy_matrices(gmodel)
+        N = gmodel.NumIntVars
+        M = gmodel.NumConstrs
+        sense = gmodel.ModelSense
+        #n_steps = N + 50
+        print(f"\n\nproblem Name: {name_only}, Num_Vars: {N}, Num_Constrs: {M}")
+        if sense == gp.GRB.MINIMIZE:  # or sense == 1
+          print("The problem is a MINIMIZATION problem.")
+        elif sense == gp.GRB.MAXIMIZE:  # or sense == -1
+          print("The problem is a MAXIMIZATION problem.")
+        #print("\nObjective Function Expression:")
+        #print(gmodel.getObjective())
+        gmodel = gmodel.relax()  # Relax the model to get fractional solutions
+        time1 = time.perf_counter()
+        tc, obj_val, x_val = solve_bip_gurobi(gmodel, vec=None, relax=False)
+        time2 = time.perf_counter()
+        print(f"Time taken by solver:", datetime.timedelta(seconds=time2-time1))
+        #print("Number of binary variables:", N)
+        #print("Number of constraints:", M)
+        print("Solution of the Relaxation:------------")
+        #print(f"\nX: {np.round(x_val,2)}, Obj = {np.round(obj_val,2)}")
+        print(f"\nObj = {np.round(obj_val,2)}")
+
+        time3 = time.perf_counter()
+        env = MyMDPEnv(N, M, gmodel,A_scaled, b_scaled, le_mask, ge_mask, eq_mask) 
+        env.initial_config()
+        all_returns = []
+        all_obj_change = []
+        all_qs0 = []
+        all_critic_losses = []
+        all_critic1_losses = []
+        all_critic2_losses = []
+        all_actor_losses = []
+        #csv_vals = []
+        for run in range(N_runs):
+                    #state, _ = env.reset()
+                    #print(f"\nInitial state: {state}")            
+                    #print(f"\nIs terminal: {env.is_terminal(state)[0]}")
+                    print(f"\n{'='*50}")
+                    print(f"Running for {end_ep} episodes")
+                    #print(f"Running for alpha = {alpha}")
+                    print(f"{'='*50}")
+                    
+                    actor, episode_returns, qs0, critic1_losses,critic2_losses,critic_losses, actorGradNorm, obj_change_list, csv_vals = twoCritic(
+                            vars       = N,
+                            cons       = M,
+                            prob       = name_only,
+                            env        = env,
+                            run        = run,
+                            csv_vals   = [],
+                            Time_Limit = learning_hours,
+                            n_episodes = end_ep,  # <<< CHANGE >>> number of episodes to train
+                            gamma      = 1.0,                 # <<< CHANGE >>> no discounting for episodic tasks
+                            alpha_w    = 1e-3,
+                            alpha_theta= 1e-4,
+                            tau        = 0.005,
+                            hidden_dim = 128,                 # <<< CHANGE >>> increase for complex problems
+                            device= device,
+                            entropy_coeff_start = 0.9,    # <<< high exploration at start
+                            entropy_coeff_end = 0.01,
+                            epsilon1 = 1.0
+                            )
+                    #print(episode_returns)
+                    #dir = f"experiment_plots\\Training_Curves\\{category}\\qs0_{end_ep}Ep_mdp3"  # <<< CHANGE >>> specify your desired folder here
+                    all_returns.append(episode_returns)  # Storing episodic returns of all the episodes in each run
+                    all_qs0.append(qs0)  # Storing Q-values of the initial state in each run
+                    #all_critic_losses.append(critic_losses)  # Storing critic losses of all the episodes in each run
+                    all_critic1_losses.append(critic1_losses)  # Storing critic1 losses of all the episodes in each run
+                    #all_critic2_losses.append(critic2_losses)  # Storing critic2 losses of all the episodes in each run
+                    all_actor_losses.append(actorGradNorm)  # Storing actor gradient norms of all the episodes in each run
+                    #flot_list = [float(x) for x in obj_change_list]
+                    #print(f"\n List of mean Obj_Change per episode for all episodes: {flot_list}")
+                    #all_obj_change.append(obj_change_list)  # Storing objective value changes
+                    #all_vio_constr.append(vio_constr)
+                    #all_vio_bounds.append(vio_bounds)
+                    time4 = time.perf_counter()
+                    print("\nTraining complete.")
+                    #print(f"Total time alpha {alpha}:", datetime.timedelta(seconds=time4-time3))
+                    print(f"Total time in {end_ep} episodes:", datetime.timedelta(seconds=time4-time3))
+                    #plot_any_returns(name_only,f"experiment_plots\\Training_Curves\\{category}\\{name_only}_{folder_end}\\critLoss_{end_ep}Ep_mdp3","(Critic1 + Critic2) Loss",all_critic_losses, N, M)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\actorLoss_{end_ep}Ep_{folder_end}","avg_policyGradNorm",all_actor_losses, N, M, window_size=window_size)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\V(S0)_{end_ep}Ep_{folder_end}","V(s0)",all_qs0, N, M, window_size=window_size)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\critic1Loss_{end_ep}Ep_{folder_end}","Critic1 Loss",all_critic1_losses, N, M, window_size=window_size)
+        #plot_any_returns(name_only,f"experiment_plots\\Training_Curves\\{category}\\{name_only}_{folder_end}\\critic2Loss_{end_ep}Ep_{folder_end}","Critic2 Loss",all_critic2_losses, N, M)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\returns_{end_ep}Ep_{folder_end}","TotReturns",all_returns, N, M, window_size=window_size)
+        #plot_violn(file, all_vio_constr, all_vio_bounds, episode)
+        #plot_obj_change(name_only, all_obj_change, episode, N, M)
+        print(f"Running the learnt policy to solve the {name_only} finally:**************************************************")
+        time5 = time.perf_counter()
+        trajectory, total_return, obj_final, x_final, reason, entropy,max_entropy = run_policy_nn(env, actor, device=device, hours= 0.1)   # <<< CHANGE >>>
+        time6 = time.perf_counter()
+        #print(f"Time taken by {alpha} alpha_policy :", datetime.timedelta(seconds=time6-time5))
+        print(f"Time taken by {end_ep} episode_policy in {run}th run :", datetime.timedelta(seconds=time6-time5))
+        print(f"Trajectory length: {len(trajectory)}")
+        print(f"Total return: {total_return:.2f}")
+        print(f"\nObjective in Final State: {obj_final}")
+        print(f"\nTotal Return: {total_return:.2f} over {len(trajectory)-1} steps")
+        print(f"\nReason for termination: {reason}")
+
+        #os.makedirs(rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3', exist_ok=True)
+        #torch.save(actor.state_dict(), rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3\{name_only}.pt')
+        csv_vals.append({
+        "Problem": "----",
+        "#Vars": "----",
+        "#Cons": "----",
+        "#Episodes":"----" ,
+        "RL_Obj": "----",
+        "Uni_Obj": "----",
+        "Mean_Rwd": "----",
+        "V(S0)": "----",
+        "#Success":"----",
+        #"Vio_Constr": "----",
+        #"Vio_Bounds": "----",
+        "Obj_Change": "----",
+        "AvgEp_Time": "----",
+        "Ent": "----",
+        "Max_Ent": "----",
+        "critic1_loss": "----",
+        #"critic2_loss": "----",
+        "actor_loss": "----",
+        "Train_Time": "----",
+        "Policy_Time": "----"})
+        #processed_files.add(name_only)
+        save_checkpoint(CHECKPOINT_FILE, name_only)
+
+        return name_only, csv_vals, log_buffer.getvalue()  # Return the log buffer content for this file
 
 def syntheticInst_experiment(gmodel, name_only):
     log_buffer = io.StringIO()
@@ -136,19 +268,13 @@ def syntheticInst_experiment(gmodel, name_only):
         all_critic1_losses = []
         all_critic2_losses = []
         all_actor_losses = []
-        csv_vals = []
+        #csv_vals = []
         for run in range(N_runs):
-                for episode in range(start_ep, end_ep + 1, 200):
-                #for alpha in np.linspace(0.0, 1.0, 11):
-                    #alpha = round(alpha, 1)
-
-                    '''all_vio_constr =[]
-                    all_vio_bounds = []'''
                     #state, _ = env.reset()
                     #print(f"\nInitial state: {state}")            
                     #print(f"\nIs terminal: {env.is_terminal(state)[0]}")
                     print(f"\n{'='*50}")
-                    print(f"Running for {episode} episodes")
+                    print(f"Running for {end_ep} episodes")
                     #print(f"Running for alpha = {alpha}")
                     print(f"{'='*50}")
                     
@@ -158,9 +284,9 @@ def syntheticInst_experiment(gmodel, name_only):
                             prob       = name_only,
                             env        = env,
                             run        = run,
-                            csv_vals   = csv_vals,
+                            csv_vals   = [],
                             Time_Limit = learning_hours,
-                            n_episodes = episode,  # <<< CHANGE >>> number of episodes to train
+                            n_episodes = end_ep,  # <<< CHANGE >>> number of episodes to train
                             gamma      = 1.0,                 # <<< CHANGE >>> no discounting for episodic tasks
                             alpha_w    = 1e-3,
                             alpha_theta= 1e-4,
@@ -169,16 +295,16 @@ def syntheticInst_experiment(gmodel, name_only):
                             device= device,
                             entropy_coeff_start = 0.9,    # <<< high exploration at start
                             entropy_coeff_end = 0.01,
-                            epsilon1 = 1.0
+                            epsilon2 = 1.0
                             )
                     #print(episode_returns)
                     #dir = f"experiment_plots\\Training_Curves\\{category}\\qs0_{end_ep}Ep_mdp3"  # <<< CHANGE >>> specify your desired folder here
-                    all_returns.append(episode_returns)   # Storing episodic returns of all the episodes in each run
-                    all_qs0.append(qs0)  # Storing Q-values of the initial state in each run
+                    all_returns[run] = episode_returns  # Storing episodic returns of all the episodes in each run
+                    all_qs0[run] = qs0  # Storing Q-values of the initial state in each run
                     #all_critic_losses.append(critic_losses)  # Storing critic losses of all the episodes in each run
-                    all_critic1_losses.append(critic1_losses)  # Storing critic1 losses of all the episodes in each run
+                    all_critic1_losses[run] = critic1_losses  # Storing critic1 losses of all the episodes in each run
                     #all_critic2_losses.append(critic2_losses)  # Storing critic2 losses of all the episodes in each run
-                    all_actor_losses.append(actorGradNorm)  # Storing actor gradient norms of all the episodes in each run
+                    all_actor_losses[run] = actorGradNorm  # Storing actor gradient norms of all the episodes in each run
                     flot_list = [float(x) for x in obj_change_list]
                     print(f"\n List of mean Obj_Change per episode for all episodes: {flot_list}")
                     #all_obj_change.append(obj_change_list)  # Storing objective value changes
@@ -187,13 +313,13 @@ def syntheticInst_experiment(gmodel, name_only):
                     time4 = time.perf_counter()
                     print("\nTraining complete.")
                     #print(f"Total time alpha {alpha}:", datetime.timedelta(seconds=time4-time3))
-                    print(f"Total time in {episode} episodes:", datetime.timedelta(seconds=time4-time3))
+                    print(f"Total time in {end_ep} episodes:", datetime.timedelta(seconds=time4-time3))
                     #plot_any_returns(name_only,f"experiment_plots\\Training_Curves\\{category}\\{name_only}_{folder_end}\\critLoss_{end_ep}Ep_mdp3","(Critic1 + Critic2) Loss",all_critic_losses, N, M)
-        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\actorLoss_{end_ep}Ep_{folder_end}","avg_policyGradNorm",all_actor_losses, N, M, window_size=10)
-        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\V(S0)_{end_ep}Ep_{folder_end}","V(s0)",all_qs0, N, M, window_size=10)
-        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\critic1Loss_{end_ep}Ep_{folder_end}","Critic1 Loss",all_critic1_losses, N, M, window_size=10)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\actorLoss_{end_ep}Ep_{folder_end}","avg_policyGradNorm",all_actor_losses, N, M, window_size=window_size)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\V(S0)_{end_ep}Ep_{folder_end}","V(s0)",all_qs0, N, M, window_size=window_size)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\critic1Loss_{end_ep}Ep_{folder_end}","Critic1 Loss",all_critic1_losses, N, M, window_size=window_size)
         #plot_any_returns(name_only,f"experiment_plots\\Training_Curves\\{category}\\{name_only}_{folder_end}\\critic2Loss_{end_ep}Ep_{folder_end}","Critic2 Loss",all_critic2_losses, N, M)
-        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\returns_{end_ep}Ep_{folder_end}","TotReturns",all_returns, N, M, window_size=10)
+        plot_ma_returns(name_only,f"D:\\experiment_plots\\Training_Curves\\{category}\\{folder_end}\\{name_only}_{folder_end}\\returns_{end_ep}Ep_{folder_end}","TotReturns",all_returns, N, M, window_size=window_size)
         #plot_violn(file, all_vio_constr, all_vio_bounds, episode)
         #plot_obj_change(name_only, all_obj_change, episode, N, M)
         print(f"Running the learnt policy to solve the {name_only} finally:**************************************************")
@@ -201,15 +327,15 @@ def syntheticInst_experiment(gmodel, name_only):
         trajectory, total_return, obj_final, x_final, reason, entropy,max_entropy = run_policy_nn(env, actor, device=device, hours= 0.1)   # <<< CHANGE >>>
         time6 = time.perf_counter()
         #print(f"Time taken by {alpha} alpha_policy :", datetime.timedelta(seconds=time6-time5))
-        print(f"Time taken by {episode} episode_policy in {run}th run :", datetime.timedelta(seconds=time6-time5))
+        print(f"Time taken by {end_ep} episode_policy in {run}th run :", datetime.timedelta(seconds=time6-time5))
         print(f"Trajectory length: {len(trajectory)}")
         print(f"Total return: {total_return:.2f}")
         print(f"\nObjective in Final State: {obj_final}")
         print(f"\nTotal Return: {total_return:.2f} over {len(trajectory)-1} steps")
         print(f"\nReason for termination: {reason}")
 
-        os.makedirs(rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3', exist_ok=True)
-        torch.save(actor.state_dict(), rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3\{name_only}.pt')
+        #os.makedirs(rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3', exist_ok=True)
+        #torch.save(actor.state_dict(), rf'D:\MINLPRL\policy_files\{category}\{name_only}_{folder_end}\{end_ep}Ep_mdp3\{name_only}.pt')
         csv_vals.append({
         "Problem": "----",
         "#Vars": "----",
@@ -253,7 +379,7 @@ def run_generated_instance(instance_id, category, seed):
     model = generate_instance(category, seed)
     instance_name = f"{category[0].upper()}_{instance_id:03d}"
 
-    returned_name, results_bundle, log_content = syntheticInst_experiment(
+    returned_name, results_bundle, log_content = syntheticInst_print(
         model, instance_name
     )
 
@@ -302,42 +428,42 @@ if __name__ == "__main__":
             for future in concurrent.futures.as_completed(future_to_instance):
                 instance_id = future_to_instance[future]
 
-                try:
-                    returned_name, results_bundle, log_content = future.result()
+                #try:
+                returned_name, results_bundle, log_content = future.result()
 
-                    results.extend(results_bundle)
+                results.extend(results_bundle)
 
-                    print(f"Successfully completed {returned_name}")
+                print(f"Successfully completed {returned_name}")
 
-                    master_file.write(f"=== Output for {returned_name} ===\n")
-                    master_file.write(log_content)
-                    master_file.write("\n\n")
-                    master_file.flush()
+                master_file.write(f"=== Output for {returned_name} ===\n")
+                master_file.write(log_content)
+                master_file.write("\n\n")
+                master_file.flush()
 
-                    if results_bundle:
-                        first_item = results_bundle[0]
+                if results_bundle:
+                    first_item = results_bundle[0]
 
-                        if isinstance(first_item, dict):
-                            keys = list(first_item.keys())
+                    if isinstance(first_item, dict):
+                        keys = list(first_item.keys())
 
-                            if not csv_header_written:
-                                csv_writer.writerow(keys)
-                                csv_header_written = True
+                        if not csv_header_written:
+                            csv_writer.writerow(keys)
+                            csv_header_written = True
 
-                            for row_dict in results_bundle:
-                                csv_writer.writerow([row_dict.get(k, "") for k in keys])
+                        for row_dict in results_bundle:
+                            csv_writer.writerow([row_dict.get(k, "") for k in keys])
 
-                        elif isinstance(first_item, (list, tuple)):
-                            for row in results_bundle:
-                                csv_writer.writerow(list(row))
+                    elif isinstance(first_item, (list, tuple)):
+                        for row in results_bundle:
+                            csv_writer.writerow(list(row))
 
-                        csv_file.flush()
+                    csv_file.flush()
 
                     #processed_files.add(instance_id)
                     #save_checkpoint(CHECKPOINT_FILE, processed_files)
 
-                except Exception as e:
-                    print(f"ERROR in instance {instance_id}: {e}")
+                '''except Exception as e:
+                    print(f"ERROR in instance {instance_id}: {e}")'''
     
     time_exp_end = time.perf_counter()
     total_exp_time = time_exp_end - time_exp_start

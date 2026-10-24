@@ -136,7 +136,7 @@ def run_uniform(env, device=None, hours=None):  # <<< CHANGE >>> time_limit in s
             print(f"Time limit of {time_limit_seconds}s reached after {len(trajectory)} steps. Policy Stopping.")
             reason = 'TIME_LIMIT'
             break
-        state_t = torch.FloatTensor(state).to(device)
+        #state_t = torch.FloatTensor(state).to(device)
         #logits = actor(state_t)
         #dist = Categorical(logits=logits)
 
@@ -407,7 +407,8 @@ def plot_ma_returns(prob_name, dir, y_label, all_returns, vars, cons, window_siz
     - window_size (int): The size of the rolling window for the moving average.
     """
     all_returns = np.array(all_returns) 
-    
+    print (f"All returns shape: {all_returns.shape}")
+    #print (f"\nAll returns sample: {all_returns}")
     # Calculate raw mean across runs/experiments
     raw_mean_returns = np.mean(all_returns, axis=0)
     

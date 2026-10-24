@@ -16,7 +16,8 @@ import numpy as np
 from Test_Display import run_policy_nn, run_uniform
 from gurobipy_functions import solve_bip_gurobiws
 #from environ_mdp3 import CriticNet, ActorNet
-from environ_TreeEpisode import CriticNet, ActorNet
+#from environ_TreeEpisode import CriticNet, ActorNet
+from environ_mdp3 import CriticNet, ActorNet
 learning_hours = float(sys.argv[4]) if len(sys.argv) > 4 else 1
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
@@ -468,7 +469,7 @@ def twoCritic(
     actorGradNorm = [0]*n_episodes
     start_time = time.perf_counter()
     decay_rate = 0.01
-    env.initial_config()
+    #env.initial_config()
     for episode in range(n_episodes):
         time1 = time.perf_counter()
         print(f"Episode {episode}/{n_episodes-1}")
@@ -498,12 +499,12 @@ def twoCritic(
         if episode == 0:
             if env.quit == True:
                 trajectory.append((state, None, 0.0))
-                episode_returns.append(total_return)
+                episode_returns[episode] = total_return
                 #obj_change_list.append(obj_change)
-                qs0.append(None)
-                critic1_losses.append(None)
-                critic2_losses.append(None)
-                actorGradNorm.append(None)
+                qs0[episode] = 0
+                critic1_losses[episode] = 0
+                critic2_losses[episode] = 0
+                actorGradNorm[episode] = 0
                 csv_vals.append({
                 "Problem": prob,
                 "#Vars": vars,
@@ -526,7 +527,7 @@ def twoCritic(
                 "Train_Time": None,
                 "Policy_Time": None
                 })
-                return actor,  episode_returns, qs0, critic1_losses, critic2_losses, actorGradNorm, obj_change_list, csv_vals
+                return actor,  episode_returns, qs0, critic1_losses, critic2_losses, critic_losses, actorGradNorm, obj_change_list, csv_vals
         #env.obj_val1 = env.init_obj_val
         while True:
             state_t = torch.FloatTensor(state).to(device)
@@ -546,8 +547,8 @@ def twoCritic(
                 action = random.choice(valid)  # Uniform exploration
             else:'''
             #action = greedy_action_nn(actor, state_t, valid, n_actions)
-            action = sample_action_nn(actor, state_t, valid, n_actions)
-            #action = epsilon_sample_action_nn(actor, state_t, valid, n_actions, epsilon)
+            #action = sample_action_nn(actor, state_t, valid, n_actions)
+            action = epsilon_sample_action_nn(actor, state_t, valid, n_actions, epsilon1)
             #action = (action_root, dir_root = 'L' if dir_root == 'DOWN' else 'R')  # Use the action from the root node solution as the first action in the first episode
             #next_state, reward, obj_val, x_val, terminated, truncated, reason = env.step(state, action)  #Fpr env_TreeEp2
             next_state, reward, obj_val, x_val, terminated, truncated, reason = env.step(action)  # For env_mdp3
@@ -692,7 +693,7 @@ def twoCritic(
 
         # Issue 2 — fixed progress print
         #if episode % 1 == 0:
-        if episode % 100 == 0 and run % 10 == 0:
+        if episode % 1000 == 0:
             #formatted_coll = [f"{x:.2f}" for x in clean_coll]
             #print(f"Objectve changes in episode {episode}: {formatted_coll}\n") #In this episode at each step
             #print(f"\n Mean obj_change in episode {episode}: {np.mean(clean_coll):.2f}") #In this episode
@@ -744,7 +745,7 @@ def twoCritic(
 
     distinct_count = len(successful_X)
     print(f"\nTotal distinct feasible solutions of {prob}: {distinct_count}\n")
-    print_vector_table(successful_X, max_vec_items=10, col_width=35)
+    #print_vector_table(successful_X, max_vec_items=10, col_width=35)
 
     return actor, episode_returns, qs0, critic1_losses, critic2_losses, critic_losses, actorGradNorm, obj_change_list, csv_vals
 

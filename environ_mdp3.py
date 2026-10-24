@@ -254,6 +254,7 @@ class MyMDPEnv(gym.Env):
         self.gmodel.update()  
         self.state = self.init_state
         self.step_count = 0
+        self.obj_val2 = 0
         self.episode_start_time = time.time()
         self.violated_constraints = 0
         self.violator_bounds = 0
@@ -326,7 +327,8 @@ class MyMDPEnv(gym.Env):
         NO_SOLUTION = {'INFEASIBLE', 'INF_OR_UNBD', 'UNBOUNDED'}
         tc, obj, x, _, _ = solve_bip_gurobiws(self.gmodel, vec = None, relax = False, warm_start= None, vbasis= None, cbasis= None)
         #tc, obj, x, _, _ = solve_bip_scipws(self.gmodel,vec= None, relax= False,warm_start= None,vbasis= None, cbasis= None) 
-
+        nb_indices = [j for j, v in enumerate(x) if v not in (0, 1)]
+        print(f"\nInitial Config :nb_indices = {nb_indices}")
         #print(f"len(state)= {len(x)}")
         self.warm_start = x
         #self.init_state =  np.array([0]*self.num_vars + [1]*self.num_vars + list(x), dtype=np.float32) 
@@ -335,6 +337,11 @@ class MyMDPEnv(gym.Env):
             self.quit = True
             self.init_state = None
             self.init_obj_val = None
+        elif not nb_indices:
+            print(f" XXXXXXXXXXXXXXXXXXXXXXXX Feasible Instance. Reason: {tc} XXXXXXXXXXXXXXXXXXXXXXXXX")
+            self.quit = True
+            self.init_state = np.concatenate((np.zeros(self.num_vars), np.ones(self.num_vars), x), axis=0).astype(np.float32)
+            self.init_obj_val = obj
         else:
             self.init_state = np.concatenate((np.zeros(self.num_vars), np.ones(self.num_vars), x), axis=0).astype(np.float32)
             self.init_obj_val = obj
@@ -400,6 +407,8 @@ class MyMDPEnv(gym.Env):
           self.warm_start = next_state[:self.num_vars]
           return Terminated, reward, self.obj_val1 - self.obj_val2, reason '''
         nb_indices = [j for j, v in enumerate(next_state[2 * self.num_vars:3 * self.num_vars]) if v not in (0, 1)]
+        bin_indices = [j for j, v in enumerate(next_state[2 * self.num_vars:3 * self.num_vars]) if v in (0, 1)]
+        rel_bin = len(bin_indices) - self.step_count
         if not nb_indices:
           #reward = self.num_vars
           reward = +2
@@ -412,16 +421,18 @@ class MyMDPEnv(gym.Env):
         #constr_sat = self.compute_sparse_vectorized_loss(x_val2, self.A_scaled, self.b_scaled, self.le_mask, self.ge_mask, self.eq_mask)
         #obj_change= 1/(1 + np.exp(obj_val1- obj_val2))  # Sigmoid function to normalize the loss between 0 and 1
         obj_change = self.obj_val1 - self.obj_val2
-        squashed_obj_change = np.tanh(obj_change)  # Squash the objective change to be between -1 and 1
+        #squashed_obj_change = np.tanh(obj_change)  # Squash the objective change to be between -1 and 1
         #rel_sol= next_state[2 * self.num_vars:3 * self.num_vars]
         #intg_loss = gaussian_mixture_score(rel_sol, sigma)
-        Nintg_penalty = len(nb_indices)/self.num_vars
+        #Nintg_penalty = len(nb_indices)/self.num_vars
         #print(f"\n sigma = {sigma}")
         #feas_loss = self.compute_sparse_product_loss(x_val2, self.A_scaled, self.b_scaled, self.le_mask, self.ge_mask, self.eq_mask)
         feas_loss = self.num_constraints
         #print(f"\n alpha= {alpha}")
         #reward = intg_loss - 1
-        #reward = -Nintg_penalty
+        #reward = -1 -Nintg_penalty
+        print(f"\n len(bin_indices) = {len(bin_indices)}, step_count = {self.step_count},rel_bin = {rel_bin}, len(nb_indices) = {len(nb_indices)}, self.num_vars = {self.num_vars}")
+        #reward = (rel_bin - len(nb_indices))/self.num_vars
         #reward = feas_loss
         reward = -1
         '''if obj_val1 == obj_val2:
